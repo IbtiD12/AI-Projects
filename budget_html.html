@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Summer Budget Tracker ☀️</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; background: linear-gradient(160deg,#fff7ed 0%,#fef3c7 45%,#ecfeff 100%); font-family: 'Segoe UI', sans-serif; color: #7c2d12; }
+    @keyframes floatUp { 0%{transform:translateY(0) rotate(0deg);opacity:0} 10%{opacity:0.25} 90%{opacity:0.15} 100%{transform:translateY(-110vh) rotate(15deg);opacity:0} }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes pulseRed { 0%,100%{box-shadow:0 0 8px rgba(239,68,68,0.4)} 50%{box-shadow:0 0 20px rgba(239,68,68,0.7)} }
+    input[type=number]::-webkit-inner-spin-button { opacity:0.4; }
+    input::placeholder { color: rgba(120,80,20,0.4); }
+    select option { background:#fff7ed; color:#7c2d12; }
+    ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:transparent} ::-webkit-scrollbar-thumb{background:#f97316;border-radius:3px}
+    .particle { position:fixed; pointer-events:none; z-index:0; font-size:14px; opacity:0.25; animation: floatUp linear infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const INIT_CATEGORIES = [
+      { id:1, name:"Net Rent",       budget:1667.50, color:"#f97316" },
+      { id:2, name:"Utilities",      budget:80.00,   color:"#eab308" },
+      { id:3, name:"Phone",          budget:60.55,   color:"#06b6d4" },
+      { id:4, name:"Subscriptions",  budget:25.99,   color:"#a855f7" },
+      { id:5, name:"Groceries",      budget:360.00,  color:"#22c55e" },
+      { id:6, name:"Lifestyle",      budget:1342.00, color:"#ec4899" },
+    ];
+    const SAVINGS_GOALS = [
+      { id:"g1", label:"Emergency Fund",   target:7000,  monthly:583,  color:"#06b6d4" },
+      { id:"g2", label:"Long-term Savings",target:27500, monthly:1000, color:"#a855f7" },
+    ];
+    const INVEST_MONTHLY = 250;
+    const EMOJIS = ["☀️","🌊","🍦","🌺","🐚","🌴","🍉","⭐","🦋","🌸"];
+
+    const fmt  = n => "$" + Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const fmtS = n => "$" + Number(n).toLocaleString("en-US",{minimumFractionDigits:0, maximumFractionDigits:0});
+
+    // ── localStorage helpers ──────────────────────────────────────
+    const save = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch(_){} };
+    const load = (k,d) => { try { const v=localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(_){ return d; } };
+
+    // ── Particles ─────────────────────────────────────────────────
+    function Particles() {
+      const items = Array.from({length:18},(_,i)=>({
+        id:i, left:`${(i*5.7)%100}%`,
+        fontSize: 10+(i%5)*2,
+        animationDuration:`${14+(i%7)*2}s`,
+        animationDelay:`${(i*1.3)%10}s`,
+        emoji: EMOJIS[i%EMOJIS.length],
+      }));
+      return items.map(p=>(
+        <div key={p.id} className="particle"
+          style={{left:p.left,bottom:-40,fontSize:p.fontSize,animationDuration:p.animationDuration,animationDelay:p.animationDelay}}>
+          {p.emoji}
+        </div>
+      ));
+    }
+
+    // ── Card ──────────────────────────────────────────────────────
+    function Card({children,over,style={}}) {
+      return (
+        <div style={{background:"rgba(255,255,255,0.6)",backdropFilter:"blur(16px)",border:over?"1.5px solid rgba(239,68,68,0.5)":"1px solid rgba(255,200,100,0.4)",borderRadius:20,padding:20,marginBottom:16,boxShadow:over?undefined:"0 2px 16px rgba(249,115,22,0.07)",animation:over?"pulseRed 2s infinite":undefined,...style}}>
+          {children}
+        </div>
+      );
+    }
+
+    function SectionTitle({emoji,children}) {
+      return <h2 style={{margin:"0 0 14px",fontSize:14,fontWeight:800,color:"#c2410c",letterSpacing:1.2,display:"flex",alignItems:"center",gap:6}}>{emoji} {children}</h2>;
+    }
+
+    function ProgressBar({pct,color,over}) {
+      return (
+        <div style={{height:7,borderRadius:4,background:"rgba(0,0,0,0.08)",overflow:"hidden",marginTop:6}}>
+          <div style={{height:"100%",width:`${Math.min(pct,100)}%`,borderRadius:4,background:over?"linear-gradient(90deg,#ef4444,#dc2626)":`linear-gradient(90deg,${color},${color}99)`,transition:"width 0.4s ease"}} />
+        </div>
+      );
+    }
+
+    function InlineEdit({value,onChange,type="number",prefix="$"}) {
+      const [editing,setEditing]=useState(false);
+      const [val,setVal]=useState(value);
+      useEffect(()=>setVal(value),[value]);
+      const commit = () => { onChange(type==="number"?parseFloat(val)||0:val); setEditing(false); };
+      if(editing) return (
+        <input autoFocus type={type} value={val}
+          onChange={e=>setVal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e=>e.key==="Enter"&&commit()}
+          style={{width:90,background:"rgba(255,255,255,0.8)",border:"1.5px solid #f97316",borderRadius:7,padding:"2px 7px",fontSize:"inherit",color:"#7c2d12"}}
+        />
+      );
+      return (
+        <span onClick={()=>{setVal(value);setEditing(true);}} title="Click to edit"
+          style={{cursor:"pointer",borderBottom:"1.5px dashed #f97316",paddingBottom:1}}>
+          {type==="number"?fmt(value):value}
+        </span>
+      );
+    }
+
+    // ── Main App ──────────────────────────────────────────────────
+    function App() {
+      const [tab,setTab]           = useState("dashboard");
+      const [entries,setEntries]   = useState(()=>load("sbt_entries",[]));
+      const [savings,setSavings]   = useState(()=>load("sbt_savings",{g1:625,g2:300}));
+      const [invest,setInvest]     = useState(()=>load("sbt_invest",250));
+      const [categories,setCats]   = useState(()=>load("sbt_cats",INIT_CATEGORIES));
+      const [income,setIncome]     = useState(()=>load("sbt_income",{p1:2035.04,p2:2019.78,roommate:1727.50,received:2}));
+      const [form,setForm]         = useState({desc:"",amount:"",catId:1,date:new Date().toISOString().slice(0,10)});
+
+      // persist
+      useEffect(()=>save("sbt_entries",entries),[entries]);
+      useEffect(()=>save("sbt_savings",savings),[savings]);
+      useEffect(()=>save("sbt_invest",invest),[invest]);
+      useEffect(()=>save("sbt_cats",categories),[categories]);
+      useEffect(()=>save("sbt_income",income),[income]);
+
+      const catTotals = categories.reduce((acc,c)=>{
+        acc[c.id]=entries.filter(e=>e.catId===c.id).reduce((s,e)=>s+e.amount,0); return acc;
+      },{});
+      const totalExpenses = Object.values(catTotals).reduce((s,v)=>s+v,0);
+      const totalBudget   = categories.reduce((s,c)=>s+c.budget,0);
+      const totalSavings  = (savings.g1||0)+(savings.g2||0);
+      const totalIncome   = (income.p1+income.p2)*Math.floor(income.received/2)+(income.received%2?income.p1:0)+income.roommate;
+      const totalOut      = totalExpenses+totalSavings+(invest||0);
+      const remaining     = totalIncome-totalOut;
+
+      const addEntry = () => {
+        const amt=parseFloat(form.amount);
+        if(!form.desc.trim()||!amt||amt<=0) return;
+        setEntries(prev=>[...prev,{id:Date.now(),date:form.date,catId:parseInt(form.catId),desc:form.desc.trim(),amount:amt}]);
+        setForm(f=>({...f,desc:"",amount:""}));
+      };
+
+      const inp = {background:"rgba(255,255,255,0.75)",border:"1.5px solid rgba(249,115,22,0.3)",borderRadius:10,padding:"9px 12px",color:"#7c2d12",fontSize:13,width:"100%"};
+      const tabBtn = active => ({padding:"8px 18px",borderRadius:30,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:active?"linear-gradient(135deg,#f97316,#eab308)":"rgba(255,255,255,0.5)",color:active?"#fff":"#c2410c",boxShadow:active?"0 2px 10px rgba(249,115,22,0.3)":"none"});
+
+      return (
+        <div style={{minHeight:"100vh",position:"relative"}}>
+          <Particles />
+          <div style={{position:"relative",zIndex:1,maxWidth:860,margin:"0 auto",padding:"24px 14px 40px"}}>
+
+            {/* Header */}
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{fontSize:38}}>☀️</div>
+              <h1 style={{margin:"4px 0 2px",fontSize:30,fontWeight:900,background:"linear-gradient(90deg,#f97316,#eab308,#06b6d4)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Summer Budget Tracker</h1>
+              <p style={{margin:0,fontSize:13,color:"#c2410c",opacity:0.65}}>Your personal finance dashboard 🌊</p>
+            </div>
+
+            {/* Tabs */}
+            <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:22,flexWrap:"wrap"}}>
+              {[["dashboard","📊 Dashboard"],["expenses","🍦 Log Expenses"],["log","🌺 Expense Log"],["settings","⚙️ Settings"]].map(([t,l])=>(
+                <button key={t} onClick={()=>setTab(t)} style={tabBtn(tab===t)}>{l}</button>
+              ))}
+            </div>
+
+            {/* ── DASHBOARD ── */}
+            {tab==="dashboard" && (
+              <div style={{animation:"fadeIn 0.4s ease"}}>
+                <Card over={remaining<0}>
+                  <SectionTitle emoji="💰">NET POSITION</SectionTitle>
+                  <div style={{display:"flex",justifyContent:"space-around",flexWrap:"wrap",gap:12,textAlign:"center"}}>
+                    {[["Total Income",totalIncome,"#22c55e"],["Total Out",totalOut,"#f97316"],["Remaining",remaining,remaining<0?"#ef4444":"#06b6d4"]].map(([l,v,c])=>(
+                      <div key={l}>
+                        <div style={{fontSize:11,opacity:0.55,fontWeight:700,letterSpacing:1,marginBottom:4}}>{l}</div>
+                        <div style={{fontSize:26,fontWeight:900,color:c}}>{fmt(v)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{marginTop:12,textAlign:"center",background:remaining<0?"rgba(239,68,68,0.1)":"rgba(34,197,94,0.1)",border:remaining<0?"1px solid rgba(239,68,68,0.4)":"1px solid rgba(34,197,94,0.3)",borderRadius:10,padding:"7px 14px",color:remaining<0?"#ef4444":"#16a34a",fontWeight:700,fontSize:13}}>
+                    {remaining<0?`🔴 Over budget by ${fmt(Math.abs(remaining))}`:`✅ ${fmt(remaining)} remaining`}
+                  </div>
+                </Card>
+
+                <Card>
+                  <SectionTitle emoji="💵">ACTUAL INCOME (So Far)</SectionTitle>
+                  {[
+                    ["Total Paychecks Received",(income.p1+income.p2)*Math.floor(income.received/2)+(income.received%2?income.p1:0),false],
+                    ["Roommate Contributions",income.roommate,false],
+                    ["TOTAL INCOME TO DATE",totalIncome,true],
+                  ].map(([l,v,bold],i)=>(
+                    <div key={l} style={{display:"flex",justifyContent:"space-between",padding:bold?"10px 0 0":"5px 0",borderTop:bold?"1.5px solid rgba(249,115,22,0.2)":"none",marginTop:bold?4:0}}>
+                      <span style={{fontSize:13,fontWeight:bold?800:500}}>{l}</span>
+                      <span style={{fontWeight:bold?900:600,color:bold?"#22c55e":"#7c2d12"}}>{fmt(v)}</span>
+                    </div>
+                  ))}
+                </Card>
+
+                <Card>
+                  <SectionTitle emoji="🎯">SAVINGS GOALS</SectionTitle>
+                  {SAVINGS_GOALS.map(g=>{
+                    const actual=savings[g.id]||0; const pct=(actual/g.target)*100;
+                    return (
+                      <div key={g.id} style={{marginBottom:14,padding:"12px 14px",background:"rgba(255,255,255,0.5)",borderRadius:12,border:`1px solid ${g.color}33`}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <span style={{fontWeight:700,fontSize:14,color:g.color}}>{g.label}</span>
+                          <span style={{fontSize:12,fontWeight:600,color:g.color}}>{pct.toFixed(0)}%</span>
+                        </div>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:12,opacity:0.6,margin:"4px 0"}}>
+                          <span>Actual: {fmt(actual)} / Target: {fmtS(g.target)}</span>
+                          <span>Monthly: {fmt(g.monthly)}</span>
+                        </div>
+                        <ProgressBar pct={pct} color={g.color} />
+                        <div style={{fontSize:12,marginTop:6,opacity:0.55}}>Remaining: {fmt(g.target-actual)}</div>
+                      </div>
+                    );
+                  })}
+                  <div style={{padding:"10px 14px",background:"rgba(255,255,255,0.5)",borderRadius:12,border:"1px solid #3b82f633",marginBottom:12}}>
+                    <div style={{fontWeight:700,fontSize:14,color:"#3b82f6"}}>Investments</div>
+                    <div style={{fontSize:12,opacity:0.6}}>Actual: {fmt(invest)} / Monthly target: {fmt(INVEST_MONTHLY)}</div>
+                    <ProgressBar pct={(invest/(INVEST_MONTHLY*12))*100} color="#3b82f6" />
+                  </div>
+                  <div style={{padding:"10px 14px",background:"linear-gradient(135deg,rgba(249,115,22,0.08),rgba(234,179,8,0.08))",borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontWeight:800,fontSize:14}}>TOTAL WEALTH BUILDING</span>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:11,opacity:0.55}}>Target: $37,500</div>
+                      <div style={{fontWeight:900,color:"#22c55e"}}>{fmt(totalSavings+invest)}</div>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card>
+                  <SectionTitle emoji="📋">ACTUAL SPENDING (So Far)</SectionTitle>
+                  <div style={{overflowX:"auto"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                      <thead>
+                        <tr style={{borderBottom:"2px solid rgba(249,115,22,0.2)"}}>
+                          {["Category","Budget","Actual","vs Budget"].map(h=>(
+                            <th key={h} style={{padding:"6px 10px",textAlign:h==="Category"?"left":"right",fontWeight:700,opacity:0.6,fontSize:11,letterSpacing:0.8}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {categories.map(c=>{
+                          const spent=catTotals[c.id]||0; const diff=spent-c.budget; const over=diff>0;
+                          return (
+                            <tr key={c.id} style={{borderBottom:"1px solid rgba(249,115,22,0.08)",background:over?"rgba(239,68,68,0.04)":"transparent"}}>
+                              <td style={{padding:"8px 10px",fontWeight:600}}><span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:c.color,marginRight:7}} />{c.name}</td>
+                              <td style={{padding:"8px 10px",textAlign:"right",opacity:0.7}}>{fmt(c.budget)}</td>
+                              <td style={{padding:"8px 10px",textAlign:"right",fontWeight:700,color:over?"#ef4444":"#7c2d12"}}>{fmt(spent)}</td>
+                              <td style={{padding:"8px 10px",textAlign:"right",fontWeight:700,color:over?"#ef4444":"#16a34a"}}>{over?"▲":"▼"} {fmt(Math.abs(diff))}</td>
+                            </tr>
+                          );
+                        })}
+                        <tr style={{borderTop:"2px solid rgba(249,115,22,0.2)",fontWeight:900}}>
+                          <td style={{padding:"10px 10px"}}>TOTAL EXPENSES</td>
+                          <td style={{padding:"10px 10px",textAlign:"right"}}>{fmt(totalBudget)}</td>
+                          <td style={{padding:"10px 10px",textAlign:"right",color:totalExpenses>totalBudget?"#ef4444":"#7c2d12"}}>{fmt(totalExpenses)}</td>
+                          <td style={{padding:"10px 10px",textAlign:"right",color:totalExpenses>totalBudget?"#ef4444":"#16a34a"}}>{totalExpenses>totalBudget?"▲":"▼"} {fmt(Math.abs(totalExpenses-totalBudget))}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* ── LOG EXPENSES ── */}
+            {tab==="expenses" && (
+              <div style={{animation:"fadeIn 0.4s ease"}}>
+                <Card>
+                  <SectionTitle emoji="🍦">LOG AN EXPENSE</SectionTitle>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    <div>
+                      <label style={{fontSize:11,fontWeight:700,opacity:0.6,letterSpacing:0.8}}>DATE</label><br />
+                      <input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))} style={{...inp,marginTop:4}} />
+                    </div>
+                    <div>
+                      <label style={{fontSize:11,fontWeight:700,opacity:0.6,letterSpacing:0.8}}>CATEGORY</label><br />
+                      <select value={form.catId} onChange={e=>setForm(f=>({...f,catId:e.target.value}))} style={{...inp,marginTop:4,background:"rgba(255,255,255,0.75)"}}>
+                        {categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                    <div style={{gridColumn:"1/-1"}}>
+                      <label style={{fontSize:11,fontWeight:700,opacity:0.6,letterSpacing:0.8}}>DESCRIPTION</label><br />
+                      <input value={form.desc} onChange={e=>setForm(f=>({...f,desc:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addEntry()} placeholder="e.g. Trader Joe's run" style={{...inp,marginTop:4}} />
+                    </div>
+                    <div style={{gridColumn:"1/-1"}}>
+                      <label style={{fontSize:11,fontWeight:700,opacity:0.6,letterSpacing:0.8}}>AMOUNT ($)</label><br />
+                      <input type="number" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addEntry()} placeholder="0.00" style={{...inp,marginTop:4}} />
+                    </div>
+                  </div>
+                  <button onClick={addEntry} style={{marginTop:14,width:"100%",background:"linear-gradient(135deg,#f97316,#06b6d4)",border:"none",borderRadius:12,color:"#fff",padding:"13px",cursor:"pointer",fontWeight:800,fontSize:15}}>+ Add Expense</button>
+                </Card>
+
+                <Card>
+                  <SectionTitle emoji="🎯">UPDATE SAVINGS & INVESTMENTS</SectionTitle>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                    {SAVINGS_GOALS.map(g=>(
+                      <div key={g.id} style={{textAlign:"center"}}>
+                        <div style={{fontSize:11,fontWeight:700,color:g.color,marginBottom:6}}>{g.label}</div>
+                        <input type="number" value={savings[g.id]||""} onChange={e=>setSavings(p=>({...p,[g.id]:parseFloat(e.target.value)||0}))} placeholder="$0" style={{...inp,textAlign:"center"}} />
+                      </div>
+                    ))}
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"#3b82f6",marginBottom:6}}>Investments</div>
+                      <input type="number" value={invest||""} onChange={e=>setInvest(parseFloat(e.target.value)||0)} placeholder="$0" style={{...inp,textAlign:"center"}} />
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* ── EXPENSE LOG ── */}
+            {tab==="log" && (
+              <div style={{animation:"fadeIn 0.4s ease"}}>
+                <Card>
+                  <SectionTitle emoji="🌺">EXPENSE LOG</SectionTitle>
+                  {entries.length===0 && <div style={{textAlign:"center",opacity:0.45,padding:"30px 0",fontSize:14}}>No expenses logged yet 🌴<br />Head to Log Expenses to add one!</div>}
+                  {[...entries].reverse().map(e=>{
+                    const cat=categories.find(c=>c.id===e.catId);
+                    return (
+                      <div key={e.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid rgba(249,115,22,0.1)"}}>
+                        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                          <span style={{width:10,height:10,borderRadius:"50%",background:cat?.color||"#f97316",display:"inline-block",flexShrink:0}} />
+                          <div>
+                            <div style={{fontSize:13,fontWeight:600}}>{e.desc}</div>
+                            <div style={{fontSize:11,opacity:0.5}}>{cat?.name} · {e.date}</div>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                          <span style={{fontWeight:800,color:"#c2410c"}}>{fmt(e.amount)}</span>
+                          <button onClick={()=>setEntries(p=>p.filter(x=>x.id!==e.id))} style={{background:"none",border:"none",color:"rgba(200,80,20,0.35)",cursor:"pointer",fontSize:20,lineHeight:1}}>×</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </Card>
+              </div>
+            )}
+
+            {/* ── SETTINGS ── */}
+            {tab==="settings" && (
+              <div style={{animation:"fadeIn 0.4s ease"}}>
+                <Card>
+                  <SectionTitle emoji="💵">INCOME TARGETS</SectionTitle>
+                  {[["Paycheck 1 (Every 14 days)","p1"],["Paycheck 2 (Every 14 days)","p2"],["Roommate (Monthly)","roommate"]].map(([l,k])=>(
+                    <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:"1px solid rgba(249,115,22,0.1)"}}>
+                      <span style={{fontSize:13,fontWeight:600}}>{l}</span>
+                      <InlineEdit value={income[k]} onChange={v=>setIncome(p=>({...p,[k]:v}))} />
+                    </div>
+                  ))}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0"}}>
+                    <span style={{fontSize:13,fontWeight:600}}>Paychecks received so far</span>
+                    <InlineEdit value={income.received} onChange={v=>setIncome(p=>({...p,received:v}))} prefix="" />
+                  </div>
+                </Card>
+                <Card>
+                  <SectionTitle emoji="📋">EXPENSE BUDGETS</SectionTitle>
+                  {categories.map(c=>(
+                    <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:"1px solid rgba(249,115,22,0.08)"}}>
+                      <span style={{fontSize:13,fontWeight:600}}><span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:c.color,marginRight:8}} />{c.name}</span>
+                      <InlineEdit value={c.budget} onChange={v=>setCats(p=>p.map(x=>x.id===c.id?{...x,budget:v}:x))} />
+                    </div>
+                  ))}
+                </Card>
+                <Card>
+                  <SectionTitle emoji="🗑️">RESET DATA</SectionTitle>
+                  <p style={{fontSize:13,opacity:0.6,marginBottom:12}}>Clear all logged expenses and reset savings to defaults. Budget targets and income settings are kept.</p>
+                  <button onClick={()=>{ if(window.confirm("Reset all expense entries and savings actuals?")){ setEntries([]); setSavings({g1:0,g2:0}); setInvest(0); }}} style={{background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:10,color:"#ef4444",padding:"10px 20px",cursor:"pointer",fontWeight:700,fontSize:13}}>🗑️ Reset Expenses & Savings</button>
+                </Card>
+              </div>
+            )}
+
+            <div style={{textAlign:"center",fontSize:11,opacity:0.35,marginTop:8}}>Data saved in your browser · Summer Budget Tracker 🌊</div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
